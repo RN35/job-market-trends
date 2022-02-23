@@ -1,48 +1,108 @@
+""" This scripts scrapes LinkedIn job listings and saves details locally in json format """
+import logging
+import re
+import json
+from datetime import datetime
+import traceback
+import sys
 import requests
 from bs4 import BeautifulSoup
-import json
+from slugify import slugify
 
 
 def remove_html_tags(text):
-    """Remove html tags from a string"""
-    import re
-    clean = re.compile('<.*?>')
-    return re.sub(clean, '', text)
+    """Removes html tags from a string"""
+    return re.sub(re.compile("<.*?>"), "", text)
 
 
-listing_html = requests.get(
-    "https://www.linkedin.com/jobs/software-engineer-intern-jobs-united-states/")
+def get_html_for_web_page(url):
+    """Makes a get request to retrieve html"""
+    html = requests.get(url)
+    return html.text
 
-doc = BeautifulSoup(listing_html.text, "html.parser")
+
+def save_dict_to_file(input_dict, file):
+    """Writes dictionnary to a file"""
+    with open(file, "w") as result_file:
+        json.dump(input_dict, result_file, indent=4)
 
 
-jobs_ul = doc.find("ul", {"class": "jobs-search__results-list"})
+def get_job_listings(role, location):
+    """Parses through LinkedIn jobs page to get listings"""
+    url = f"https://www.linkedin.com/jobs/{ slugify(role)}-jobs-{slugify(location)}/"
+    doc = BeautifulSoup(get_html_for_web_page(url), "html.parser")
+    logging.info(
+        "Fetched html for role %s location %s using url %s", role, location, url
+    )
+    jobs_ul = doc.find("ul", {"class": "jobs-search__results-list"})
+    data_dump = {}
+    for listing in jobs_ul.find_all("li"):
+        try:
+            # retrieve posting url from <li> tag
+            posting_url = listing.div.a["href"]
+            posting_url = posting_url.split("?", 1)[0]
+            temp_dict = {}
 
-data_dump = {}
-for li in jobs_ul.find_all("li"):
+            # get web page of specific listing
+            listing_doc = BeautifulSoup(
+                get_html_for_web_page(posting_url), "html.parser"
+            )
+
+            # retrieve title
+            job_title = listing_doc.find(
+                "h1", {"class": "top-card-layout__title topcard__title"}
+            ).string
+            temp_dict["job_title"] = job_title.strip()
+            company_name = listing_doc.find(
+                "a", {"class": "topcard__org-name-link"}
+            ).string
+
+            # retrieve company
+            temp_dict["company_name"] = company_name.strip()
+            location = listing_doc.find(
+                "span", {"class": "topcard__flavor topcard__flavor--bullet"}
+            ).string
+
+            # retrieve location
+            temp_dict["location"] = location.strip()
+            description = listing_doc.find("div", {"class": "description__text"}).find(
+                "div", {"class": "show-more-less-html__markup"}
+            )
+
+            # retrieve description
+            temp_dict["description"] = remove_html_tags(str(description)).strip()
+            data_dump[posting_url] = temp_dict
+            logging.info(
+                "Retrieving listing for job posting %s successful", posting_url
+            )
+        except Exception:
+            logging.error("Retrieving listing for job posting %s failed", posting_url)
+            full_traceback = str(traceback.format_exc())
+            logging.error(full_traceback)
+    return data_dump
+
+
+def main():
+    """This is the main function"""
     try:
-        posting_url = li.div.a['href']
-        posting_url = posting_url.split("?", 1)[0]
-        temp_dict = {}
-        posting_html = requests.get(
-            posting_url)
-        listing = BeautifulSoup(posting_html.text, "html.parser")
-        job_title = listing.find(
-            "h1", {"class": "top-card-layout__title topcard__title"}).string
-        temp_dict['job_title'] = job_title.strip()
-        company_name = listing.find(
-            "a", {"class": "topcard__org-name-link"}).string
-        temp_dict['company_name'] = company_name.strip()
-        location = listing.find(
-            "span", {"class": "topcard__flavor topcard__flavor--bullet"}).string
-        temp_dict['location'] = location.strip()
-        description = listing.find(
-            "div", {"class": "description__text"}).find("div", {"class": "show-more-less-html__markup"})
-        temp_dict['description'] = remove_html_tags(str(description)).strip()
-        data_dump[posting_url] = temp_dict
-    except Exception:
-        with open('error.txt', 'w') as file:
-            file.write(posting_url)
+        start_timestamp = datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
+        log_file = f"{ start_timestamp }.log"
+        logging.basicConfig(
+            filename=log_file,
+            filemode="a",
+            format="*%(asctime)s APP_%(levelname)s [%(module)s>%(funcName)s]: %(message)s",
+            level="INFO",
+            datefmt="%y/%m/%d %H:%M:%S",
+        )
 
-with open('result.json', 'w') as file:
-    json.dump(data_dump, file, indent=4)
+        listings_dict = get_job_listings("Software Engineer Intern", "United States")
+        save_dict_to_file(listings_dict, "result.json")
+        logging.info("Saved results in file result.json")
+    except Exception:
+        full_traceback = str(traceback.format_exc())
+        logging.error(full_traceback)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
