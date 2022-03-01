@@ -27,6 +27,36 @@ def save_dict_to_file(input_dict, file):
         json.dump(input_dict, result_file, indent=4)
 
 
+def fetch_listing(posting_url):
+    """Makes a get request to retrieve html"""
+    listing_info = {}
+    # get web page of specific listing
+    listing_doc = BeautifulSoup(get_html_for_web_page(posting_url), "html.parser")
+
+    # retrieve title
+    job_title = listing_doc.find(
+        "h1", {"class": "top-card-layout__title topcard__title"}
+    ).string
+    listing_info["job_title"] = job_title.strip()
+    company_name = listing_doc.find("a", {"class": "topcard__org-name-link"}).string
+
+    # retrieve company
+    listing_info["company_name"] = company_name.strip()
+    location = listing_doc.find(
+        "span", {"class": "topcard__flavor topcard__flavor--bullet"}
+    ).string
+
+    # retrieve location
+    listing_info["location"] = location.strip()
+    description = listing_doc.find("div", {"class": "description__text"}).find(
+        "div", {"class": "show-more-less-html__markup"}
+    )
+
+    # retrieve description
+    listing_info["description"] = remove_html_tags(str(description)).strip()
+    return listing_info
+
+
 def get_job_listings(role, location):
     """Parses through LinkedIn jobs page to get listings"""
     url = f"https://www.linkedin.com/jobs/{ slugify(role)}-jobs-{slugify(location)}/"
@@ -35,43 +65,18 @@ def get_job_listings(role, location):
         "Fetched html for role %s location %s using url %s", role, location, url
     )
     jobs_ul = doc.find("ul", {"class": "jobs-search__results-list"})
-    data_dump = {}
+    all_listing = {}
+
     for listing in jobs_ul.find_all("li"):
+        # fetch job listing and parse it
         try:
             # retrieve posting url from <li> tag
             posting_url = listing.div.a["href"]
             posting_url = posting_url.split("?", 1)[0]
-            temp_dict = {}
 
-            # get web page of specific listing
-            listing_doc = BeautifulSoup(
-                get_html_for_web_page(posting_url), "html.parser"
-            )
+            listing_info = fetch_listing(posting_url)
 
-            # retrieve title
-            job_title = listing_doc.find(
-                "h1", {"class": "top-card-layout__title topcard__title"}
-            ).string
-            temp_dict["job_title"] = job_title.strip()
-            company_name = listing_doc.find(
-                "a", {"class": "topcard__org-name-link"}
-            ).string
-
-            # retrieve company
-            temp_dict["company_name"] = company_name.strip()
-            location = listing_doc.find(
-                "span", {"class": "topcard__flavor topcard__flavor--bullet"}
-            ).string
-
-            # retrieve location
-            temp_dict["location"] = location.strip()
-            description = listing_doc.find("div", {"class": "description__text"}).find(
-                "div", {"class": "show-more-less-html__markup"}
-            )
-
-            # retrieve description
-            temp_dict["description"] = remove_html_tags(str(description)).strip()
-            data_dump[posting_url] = temp_dict
+            all_listing[posting_url] = listing_info
             logging.info(
                 "Retrieving listing for job posting %s successful", posting_url
             )
@@ -79,7 +84,8 @@ def get_job_listings(role, location):
             logging.error("Retrieving listing for job posting %s failed", posting_url)
             full_traceback = str(traceback.format_exc())
             logging.error(full_traceback)
-    return data_dump
+
+    return all_listing
 
 
 def main():
